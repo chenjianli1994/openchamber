@@ -1,16 +1,21 @@
 import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import { getLangCoderOpencodeAuthFilePath, getLangCoderOpencodeDataDir } from '../langcoder/opencode-runtime.js';
 
-const OPENCODE_DATA_DIR = path.join(os.homedir(), '.local', 'share', 'opencode');
-const AUTH_FILE = path.join(OPENCODE_DATA_DIR, 'auth.json');
+function getAuthFilePath() {
+  return getLangCoderOpencodeAuthFilePath(process.env);
+}
+
+function getOpencodeDataDir() {
+  return getLangCoderOpencodeDataDir(process.env);
+}
 
 function readAuthFile() {
-  if (!fs.existsSync(AUTH_FILE)) {
+  const authFile = getAuthFilePath();
+  if (!fs.existsSync(authFile)) {
     return {};
   }
   try {
-    const content = fs.readFileSync(AUTH_FILE, 'utf8');
+    const content = fs.readFileSync(authFile, 'utf8');
     const trimmed = content.trim();
     if (!trimmed) {
       return {};
@@ -23,18 +28,20 @@ function readAuthFile() {
 }
 
 function writeAuthFile(auth) {
+  const opencodeDataDir = getOpencodeDataDir();
+  const authFile = getAuthFilePath();
   try {
-    if (!fs.existsSync(OPENCODE_DATA_DIR)) {
-      fs.mkdirSync(OPENCODE_DATA_DIR, { recursive: true });
+    if (!fs.existsSync(opencodeDataDir)) {
+      fs.mkdirSync(opencodeDataDir, { recursive: true });
     }
 
-    if (fs.existsSync(AUTH_FILE)) {
-      const backupFile = `${AUTH_FILE}.openchamber.backup`;
-      fs.copyFileSync(AUTH_FILE, backupFile);
+    if (fs.existsSync(authFile)) {
+      const backupFile = `${authFile}.openchamber.backup`;
+      fs.copyFileSync(authFile, backupFile);
       console.log(`Created auth backup: ${backupFile}`);
     }
 
-    fs.writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2), 'utf8');
+    fs.writeFileSync(authFile, JSON.stringify(auth, null, 2), 'utf8');
     console.log('Successfully wrote auth file');
   } catch (error) {
     console.error('Failed to write auth file:', error);
@@ -76,6 +83,6 @@ export {
   removeProviderAuth,
   getProviderAuth,
   listProviderAuths,
-  AUTH_FILE,
-  OPENCODE_DATA_DIR
+  getAuthFilePath as AUTH_FILE,
+  getOpencodeDataDir as OPENCODE_DATA_DIR
 };
