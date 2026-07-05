@@ -45,13 +45,13 @@ This module provides OpenCode server integration utilities for the web server ru
 - `packages/web/server/lib/ui-auth/ui-passkeys.js`: UI passkey storage and WebAuthn registration/authentication helpers (outside OpenCode module).
 
 ## Public exports (auth.js)
-- `readAuthFile()`: Reads and parses `~/.local/share/opencode/auth.json`.
+- `readAuthFile()`: Reads and parses the resolved OpenCode auth file.
 - `writeAuthFile(auth)`: Writes auth file with automatic backup.
 - `removeProviderAuth(providerId)`: Removes a provider's auth entry.
 - `getProviderAuth(providerId)`: Returns auth for a specific provider or null.
 - `listProviderAuths()`: Returns list of provider IDs with configured auth.
-- `AUTH_FILE`: Auth file path constant.
-- `OPENCODE_DATA_DIR`: OpenCode data directory path constant.
+- `AUTH_FILE(env?)`: Returns the resolved auth file path. By default it resolves from `LANGCODER_OPENCODE_DATA_DIR`, then `OPENCODE_DATA_DIR`, and finally falls back to `~/.local/share/opencode/auth.json`.
+- `OPENCODE_DATA_DIR(env?)`: Returns the resolved OpenCode data directory using the same precedence.
 
 ## Public exports (shared.js)
 - `OPENCODE_CONFIG_DIR`, `AGENT_DIR`, `COMMAND_DIR`, `SKILL_DIR`, `CONFIG_FILE`, `CUSTOM_CONFIG_FILE`: Path constants.
@@ -352,7 +352,7 @@ This module provides OpenCode server integration utilities for the web server ru
   - Forwards unwrapped global event payloads into notification/session side effects.
 
 ## Storage and configuration
-- Provider auth: `~/.local/share/opencode/auth.json`.
+- Provider auth: resolved from `LANGCODER_OPENCODE_DATA_DIR`, then `OPENCODE_DATA_DIR`, then fallback `~/.local/share/opencode/auth.json`.
 - User config: `~/.config/opencode/opencode.json`.
 - Project config: `<workingDirectory>/.opencode/opencode.json` or `opencode.json`.
 - Custom config: `OPENCODE_CONFIG` env var path.
