@@ -760,7 +760,11 @@ export async function reloadOpenCodeConfiguration(options?: {
         delayMs: payload.reloadDelayMs,
       });
     } else {
-      await refreshAfterOpenCodeRestart(refreshOptions);
+      if (payload?.message) {
+        updateConfigUpdateMessage(payload.message);
+      }
+      await sleep(payload?.requiresManualRestart ? 1800 : 600);
+      finishConfigUpdate();
     }
   } catch (error) {
     console.error('[reloadOpenCodeConfiguration] Failed:', error);

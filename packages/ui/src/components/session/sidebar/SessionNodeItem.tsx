@@ -64,7 +64,7 @@ type Props = {
   setEditingId: (id: string | null) => void;
   editTitle: string;
   setEditTitle: (value: string) => void;
-  handleSaveEdit: (titleOverride?: string) => void;
+  handleSaveEdit: (titleOverride?: string, directoryHint?: string | null) => void;
   handleCancelEdit: () => void;
   toggleParent: (expansionKey: string) => void;
   handleSessionSelect: (sessionId: string, sessionDirectory: string | null, projectId?: string | null) => void;
@@ -482,7 +482,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
     if (editingId !== session.id) return;
     const handleDocMouseDown = (e: MouseEvent) => {
       if (formRef.current && !formRef.current.contains(e.target as Node)) {
-        handleSaveEditRef.current(renameDraftRef.current);
+        handleSaveEditRef.current(renameDraftRef.current, sessionDirectory);
       }
     };
     document.addEventListener('mousedown', handleDocMouseDown);
@@ -513,7 +513,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
             className="flex w-full items-center gap-2"
             onSubmit={(event) => {
               event.preventDefault();
-              handleSaveEdit(renameDraft);
+              handleSaveEdit(renameDraft, sessionDirectory);
             }}
           >
             <input

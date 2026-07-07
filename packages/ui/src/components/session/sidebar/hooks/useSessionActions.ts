@@ -35,7 +35,7 @@ type Args = {
   setActiveMainTab: (tab: MainTab) => void;
   setSessionSwitcherOpen: (open: boolean) => void;
   setCurrentSession: (sessionId: string | null, directoryHint?: string | null) => void;
-  updateSessionTitle: (id: string, title: string) => Promise<void>;
+  updateSessionTitle: (id: string, title: string, directoryHint?: string | null) => Promise<void>;
   shareSession: (id: string) => Promise<Session | null>;
   unshareSession: (id: string) => Promise<Session | null>;
   deleteSession: (id: string) => Promise<boolean>;
@@ -107,11 +107,11 @@ export const useSessionActions = (args: Args) => {
     args.setEditTitle(sessionTitle);
   }, [args]);
 
-  const handleSaveEdit = React.useCallback(async (titleOverride?: string) => {
+  const handleSaveEdit = React.useCallback(async (titleOverride?: string, directoryHint?: string | null) => {
     if (!args.editingId) return;
     const trimmed = (titleOverride ?? args.editTitle).trim();
     if (trimmed) {
-      await args.updateSessionTitle(args.editingId, trimmed);
+      await args.updateSessionTitle(args.editingId, trimmed, directoryHint);
     }
     args.setEditingId(null);
     args.setEditTitle('');

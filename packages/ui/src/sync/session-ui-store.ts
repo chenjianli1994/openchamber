@@ -285,7 +285,7 @@ export type SessionUIState = {
   deleteSessions: (ids: string[], options?: Record<string, unknown>) => Promise<{ deletedIds: string[]; failedIds: string[] }>
   archiveSession: (id: string) => Promise<boolean>
   archiveSessions: (ids: string[], options?: Record<string, unknown>) => Promise<{ archivedIds: string[]; failedIds: string[] }>
-  updateSessionTitle: (sessionId: string, title: string) => Promise<void>
+  updateSessionTitle: (sessionId: string, title: string, directoryHint?: string | null) => Promise<void>
   shareSession: (sessionId: string) => Promise<Session | null>
   unshareSession: (sessionId: string) => Promise<Session | null>
   revertToMessage: (sessionId: string, messageId: string, options?: { skipRedoPush?: boolean }) => Promise<void>
@@ -1194,8 +1194,8 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
   // ---------------------------------------------------------------------------
   // updateSessionTitle — calls SDK, SSE event updates child store
   // ---------------------------------------------------------------------------
-  updateSessionTitle: async (sessionId, title) => {
-    await updateSessionTitleAction(sessionId, title)
+  updateSessionTitle: async (sessionId, title, directoryHint) => {
+    await updateSessionTitleAction(sessionId, title, directoryHint)
   },
 
   shareSession: async (sessionId) => {

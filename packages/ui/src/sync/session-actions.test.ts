@@ -10,6 +10,7 @@ let sessionRevertResult: { data?: unknown; error?: unknown; response?: { status?
 let questionReplyError: unknown | null = null
 let questionRejectError: unknown | null = null
 let sessionShareResult: { data?: unknown; error?: unknown; response?: { status?: number } } = {}
+let sessionUpdateResult: unknown = null
 const globalUpsertedSessions: unknown[] = []
 
 const mockScopedClient = {
@@ -110,6 +111,10 @@ mock.module("@/lib/opencode/client", () => ({
         throw new Error(`session.revert failed${status ? ` (${status})` : ""}: rejected`)
       }
       return Promise.resolve(sessionRevertResult.data)
+    }),
+    updateSession: mock((sessionId: string, patch: Record<string, unknown>, directory?: string | null) => {
+      replyCalls.push({ method: "session.update", params: { sessionID: sessionId, patch, directory } })
+      return Promise.resolve(sessionUpdateResult)
     }),
   },
 }))
@@ -235,11 +240,84 @@ describe("fetchMessagesForSession startup race", () => {
   })
 })
 
-describe("shareSession live state", () => {
+describe("session live state", () => {
   beforeEach(() => {
     replyCalls.length = 0
     globalUpsertedSessions.length = 0
+    registeredSessionDirectories.length = 0
     sessionShareResult = {}
+    sessionUpdateResult = null
+  })
+
+  test("updates the directory live store after renaming", async () => {
+    const originalSession = { id: "session-a", title: "Old title", time: { created: 1 } } as Session
+    const renamedSession = { id: "session-a", title: "New title", time: { created: 1, updated: 2 } } as Session
+    const sessionStore = createStore({}, { session: [originalSession] })
+    const otherStore = createStore({}, { session: [{ id: "other", title: "Other", time: { created: 1 } } as Session] })
+    const childStores = createChildStores([
+      ["/test/project", sessionStore],
+      ["/other/project", otherStore],
+    ])
+    sessionUpdateResult = renamedSession
+
+    const { setActionRefs, updateSessionTitle } = await import("./session-actions")
+    setActionRefs(mockSdk as unknown as OpencodeClient, childStores, () => "/current/project")
+
+    await updateSessionTitle("session-a", "New title")
+
+    expect(replyCalls.find((call) => call.method === "session.update")?.params).toEqual({
+      sessionID: "session-a",
+      patch: { title: "New title" },
+      directory: "/test/project",
+    })
+    expect(sessionStore.getState().session[0].title).toBe("New title")
+    expect(otherStore.getState().session[0].title).toBe("Other")
+    expect(globalUpsertedSessions).toEqual([renamedSession])
+    expect(registeredSessionDirectories.some((entry) =>
+      entry.sessionID === "session-a" && entry.directory === "/test/project",
+    )).toBe(true)
+  })
+
+  test("uses the row directory hint when renaming", async () => {
+    const originalSession = {
+      id: "session-c",
+      title: "Old title",
+      directory: "E:\\codex_pro\\SkillsHub",
+      time: { created: 1 },
+    } as SessionWithDirectory
+    const renamedSession = {
+      id: "session-c",
+      title: "New title",
+      directory: "E:/codex_pro/SkillsHub",
+      time: { created: 1, updated: 2 },
+    } as SessionWithDirectory
+    const sessionStore = createStore({}, { session: [originalSession] })
+    const duplicateStore = createStore({}, { session: [{ ...originalSession }] })
+    const currentStore = createStore({}, { session: [] })
+    const childStores = createChildStores([
+      ["E:\\codex_pro\\SkillsHub", sessionStore],
+      ["E:/codex_pro/SkillsHub", duplicateStore],
+      ["/current/project", currentStore],
+    ])
+    sessionUpdateResult = renamedSession
+
+    const { setActionRefs, updateSessionTitle } = await import("./session-actions")
+    setActionRefs(mockSdk as unknown as OpencodeClient, childStores, () => "/current/project")
+
+    await updateSessionTitle("session-c", "New title", "E:/codex_pro/SkillsHub")
+
+    expect(replyCalls.find((call) => call.method === "session.update")?.params).toEqual({
+      sessionID: "session-c",
+      patch: { title: "New title" },
+      directory: "E:/codex_pro/SkillsHub",
+    })
+    expect(sessionStore.getState().session[0].title).toBe("New title")
+    expect(duplicateStore.getState().session[0].title).toBe("New title")
+    expect(currentStore.getState().session).toEqual([])
+    expect(globalUpsertedSessions).toEqual([renamedSession])
+    expect(registeredSessionDirectories.some((entry) =>
+      entry.sessionID === "session-c" && entry.directory === "E:/codex_pro/SkillsHub",
+    )).toBe(true)
   })
 
   test("updates the directory live store after unsharing", async () => {

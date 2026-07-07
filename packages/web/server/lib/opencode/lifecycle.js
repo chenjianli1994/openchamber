@@ -15,6 +15,10 @@ const HEALTH_CHECK_MAX_CONSECUTIVE_FAILURES = parsePositiveInt(
 const HEALTH_CHECK_INTERVAL_OVERRIDE_MS = parsePositiveInt(process.env.OPENCHAMBER_OPENCODE_HEALTH_INTERVAL_MS, 0);
 const HEALTH_CHECK_RESULT_CACHE_MS = parsePositiveInt(process.env.OPENCHAMBER_OPENCODE_HEALTH_CACHE_MS, 750);
 const OPENCODE_HEALTH_PATH = '/global/health';
+const EXTERNAL_OPENCODE_RELOAD_DISPATCH_WAIT_MS = parsePositiveInt(
+  process.env.LANGCODER_EXTERNAL_OPENCODE_RELOAD_DISPATCH_WAIT_MS,
+  2000
+);
 
 export const createOpenCodeLifecycleRuntime = (deps) => {
   const {
@@ -97,6 +101,51 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     child.once('close', onClose);
     child.once('error', onError);
   });
+
+  const runExternalOpenCodeReloadCommand = async () => {
+    const scriptPath = typeof process.env.LANGCODER_EXTERNAL_OPENCODE_RELOAD_SCRIPT === 'string'
+      ? process.env.LANGCODER_EXTERNAL_OPENCODE_RELOAD_SCRIPT.trim()
+      : '';
+    const reloadPort = typeof process.env.LANGCODER_EXTERNAL_OPENCODE_RELOAD_PORT === 'string'
+      ? process.env.LANGCODER_EXTERNAL_OPENCODE_RELOAD_PORT.trim()
+      : '';
+    const command = typeof process.env.LANGCODER_EXTERNAL_OPENCODE_RELOAD_COMMAND === 'string'
+      ? process.env.LANGCODER_EXTERNAL_OPENCODE_RELOAD_COMMAND.trim()
+      : '';
+    if (!scriptPath && !command) {
+      return false;
+    }
+
+    console.log('Running managed external OpenCode reload command...');
+    await new Promise((resolve, reject) => {
+      const child = scriptPath
+        ? spawn('powershell.exe', [
+          '-NoLogo',
+          '-NoProfile',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          scriptPath,
+          ...(reloadPort ? ['-Port', reloadPort] : []),
+        ], {
+          windowsHide: true,
+          stdio: 'ignore',
+        })
+        : spawn(command, {
+          shell: true,
+          windowsHide: true,
+          stdio: 'ignore',
+        });
+
+      child.once('error', (error) => {
+        reject(error);
+      });
+      child.unref();
+      setTimeout(() => resolve(true), EXTERNAL_OPENCODE_RELOAD_DISPATCH_WAIT_MS);
+    });
+
+    return true;
+  };
 
   const waitForPortRelease = (port, timeoutMs, hostname = env.ENV_CONFIGURED_OPENCODE_HOSTNAME) => {
     if (!port) {
@@ -573,20 +622,33 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       console.log('Restarting OpenCode process...');
 
       if (state.isExternalOpenCode) {
-        console.log('Re-probing external OpenCode server...');
+        const externalReloaded = await runExternalOpenCodeReloadCommand();
         const probePort = state.openCodePort || env.ENV_CONFIGURED_OPENCODE_PORT || 4096;
         const probeOrigin = state.openCodeBaseUrl ?? env.ENV_CONFIGURED_OPENCODE_HOST?.origin;
-        const healthy = await probeExternalOpenCode(probePort, probeOrigin);
-        if (healthy) {
-          console.log(`External OpenCode server on port ${probePort} is healthy`);
+
+        if (externalReloaded) {
+          console.log(`Managed external OpenCode restart dispatched for port ${probePort}`);
           setOpenCodePort(probePort);
-          state.isOpenCodeReady = true;
-          state.lastOpenCodeError = null;
-          state.openCodeNotReadySince = 0;
           syncToHmrState();
         } else {
+          console.log('Re-probing external OpenCode server...');
+          const healthy = await probeExternalOpenCode(probePort, probeOrigin);
+          if (healthy) {
+            console.log(`External OpenCode server on port ${probePort} is healthy`);
+            setOpenCodePort(probePort);
+            state.isOpenCodeReady = true;
+            state.lastOpenCodeError = null;
+            state.openCodeNotReadySince = 0;
+            syncToHmrState();
+          } else {
+            state.lastOpenCodeError = `External OpenCode server on port ${probePort} is not responding`;
+            console.error(state.lastOpenCodeError);
+            throw new Error(state.lastOpenCodeError);
+          }
+        }
+
+        if (!externalReloaded && !state.isOpenCodeReady) {
           state.lastOpenCodeError = `External OpenCode server on port ${probePort} is not responding`;
-          console.error(state.lastOpenCodeError);
           throw new Error(state.lastOpenCodeError);
         }
 
@@ -594,7 +656,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
           setupProxy(state.expressApp);
           ensureOpenCodeApiPrefix();
         }
-        return;
+        return { externalReloaded };
       }
 
       const portToKill = state.openCodePort;
@@ -751,7 +813,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     clearResolvedOpenCodeBinary();
     await applyOpencodeBinaryFromSettings();
 
-    await restartOpenCode();
+    const restartResult = await restartOpenCode();
 
     // A managed OpenCode process is restarted (and thus re-reads config from
     // disk) by restartOpenCode(). An external OpenCode server is NOT owned by
@@ -759,7 +821,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     // written config is on disk but the running server keeps serving its old,
     // startup-cached config until the user restarts it themselves. Report this
     // honestly so callers don't claim the change is live.
-    const external = state.isExternalOpenCode === true;
+    const external = state.isExternalOpenCode === true && restartResult?.externalReloaded !== true;
 
     try {
       await waitForOpenCodeReady();
@@ -781,7 +843,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       throw error;
     }
 
-    return { reloaded: !external, external };
+    return { reloaded: !external, external, externalReloaded: restartResult?.externalReloaded === true };
   };
 
   const bootstrapOpenCodeAtStartup = async () => {

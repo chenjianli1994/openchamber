@@ -713,9 +713,18 @@ export const registerSettingsUtilityRoutes = (app, dependencies) => {
     try {
       console.log('[Server] Manual configuration reload requested');
 
-      await refreshOpenCodeAfterConfigChange('manual configuration reload');
+      const refreshResult = await refreshOpenCodeAfterConfigChange('manual configuration reload');
 
-      res.json({
+      if (refreshResult?.external) {
+        return res.json({
+          success: true,
+          requiresReload: false,
+          requiresManualRestart: true,
+          message: 'Configuration saved. Restart the external OpenCode service to apply changes.',
+        });
+      }
+
+      return res.json({
         success: true,
         requiresReload: true,
         message: 'Configuration reloaded successfully. Refreshing interface…',

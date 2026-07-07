@@ -123,6 +123,14 @@ function dirStoreForDirectory(directory: string) {
   return _childStores.ensureChild(directory)
 }
 
+function normalizeDirectoryKey(directory?: string | null): string | null {
+  if (typeof directory !== "string") return null
+  const trimmed = directory.trim()
+  if (!trimmed) return null
+  const replaced = trimmed.replace(/\\/g, "/")
+  return replaced.length > 1 ? replaced.replace(/\/+$/, "") : replaced
+}
+
 function dirStoreForSession(sessionId: string): { store: DirectoryStoreApi; directory?: string } {
   const directory = getSessionDirectory(sessionId)
   if (directory) {
@@ -135,9 +143,30 @@ function updateLiveSession(session: Session, directory?: string): void {
   const stores = _childStores
   if (!stores) return
 
-  const candidates = directory
-    ? [[directory, stores.getChild(directory)] as const]
-    : stores.children
+  const normalizedDirectory = normalizeDirectoryKey(directory)
+  const candidates: Array<readonly [string, DirectoryStoreApi | undefined]> = []
+  const seenDirectories = new Set<string>()
+
+  if (directory) {
+    candidates.push([directory, stores.getChild(directory)] as const)
+    seenDirectories.add(directory)
+  }
+
+  if (normalizedDirectory) {
+    for (const [childDirectory, store] of stores.children) {
+      if (seenDirectories.has(childDirectory)) continue
+      if (normalizeDirectoryKey(childDirectory) === normalizedDirectory) {
+        candidates.push([childDirectory, store] as const)
+        seenDirectories.add(childDirectory)
+      }
+    }
+  }
+
+  for (const [childDirectory, store] of stores.children) {
+    if (!seenDirectories.has(childDirectory)) {
+      candidates.push([childDirectory, store] as const)
+    }
+  }
 
   for (const [, store] of candidates) {
     if (!store) continue
@@ -148,7 +177,6 @@ function updateLiveSession(session: Session, directory?: string): void {
     const next = [...current]
     next[index] = mergeSessionDirectoryMetadata(session, current[index])
     store.setState({ session: next })
-    return
   }
 }
 
@@ -560,10 +588,14 @@ export async function archiveSession(sessionId: string): Promise<boolean> {
   }
 }
 
-export async function updateSessionTitle(sessionId: string, title: string): Promise<void> {
-  const sessionDirectory = getSessionDirectory(sessionId)
+export async function updateSessionTitle(sessionId: string, title: string, directoryHint?: string | null): Promise<void> {
+  const sessionDirectory = directoryHint ?? getSessionDirectory(sessionId)
   const session = await opencodeClient.updateSession(sessionId, { title }, sessionDirectory)
   useGlobalSessionsStore.getState().upsertSession(session)
+  updateLiveSession(session, sessionDirectory)
+  if (sessionDirectory) {
+    registerSessionDirectory(session.id, sessionDirectory)
+  }
 }
 
 export async function shareSession(sessionId: string): Promise<Session | null> {
