@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { EventEmitter } from 'node:events';
 import express from 'express';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'path';
+import { pathToFileURL } from 'node:url';
 
 import { createSseBoundaryTracker, registerOpenCodeProxy, writeSseChunkWithBackpressure } from './lib/opencode/proxy.js';
 
@@ -297,6 +300,119 @@ describe('OpenCode proxy SSE forwarding', () => {
     expect(data.body).toEqual(payload);
     expect(data.authorization).toBe('Bearer replay-token');
     expect(Number(data.contentLength)).toBeGreaterThan(0);
+  });
+
+  it('rewrites spreadsheet file parts to text/plain before forwarding prompt payloads', async () => {
+    const upstream = express();
+    upstream.post('/session/abc/prompt_async', express.json(), (req, res) => {
+      res.json({ body: req.body });
+    });
+    upstreamServer = await listen(upstream);
+    const upstreamPort = upstreamServer.address().port;
+    const externalBaseUrl = `http://127.0.0.1:${upstreamPort}`;
+
+    const app = express();
+    app.use('/api', express.json());
+    registerOpenCodeProxy(app, {
+      fs: {},
+      os: {},
+      path,
+      OPEN_CODE_READY_GRACE_MS: 0,
+      getRuntime: () => ({
+        openCodePort: upstreamPort,
+        openCodeBaseUrl: externalBaseUrl,
+        isOpenCodeReady: true,
+        openCodeNotReadySince: 0,
+        isRestartingOpenCode: false,
+      }),
+      getOpenCodeAuthHeaders: () => ({}),
+      buildOpenCodeUrl: (requestPath) => `${externalBaseUrl}${requestPath}`,
+      ensureOpenCodeApiPrefix: () => {},
+    });
+    proxyServer = await listen(app);
+    const proxyPort = proxyServer.address().port;
+
+    const payload = {
+      messageID: 'msg_spreadsheet',
+      parts: [{
+        type: 'file',
+        filename: 'report.xlsx',
+        mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        url: 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,ZmFrZQ==',
+      }],
+    };
+
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/api/session/abc/prompt_async`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.body.parts).toHaveLength(1);
+    expect(data.body.parts[0].mime).toBe('text/plain');
+    expect(data.body.parts[0].url.startsWith('data:text/plain;base64,')).toBe(true);
+  });
+
+  it('parses unhandled prompt JSON bodies and rewrites file URL spreadsheet parts', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-xlsx-'));
+    const spreadsheetPath = path.join(tempDir, 'report.xlsx');
+    fs.writeFileSync(spreadsheetPath, Buffer.from('not a real workbook'));
+
+    try {
+      const upstream = express();
+      upstream.post('/session/abc/prompt_async', express.json(), (req, res) => {
+        res.json({ body: req.body });
+      });
+      upstreamServer = await listen(upstream);
+      const upstreamPort = upstreamServer.address().port;
+      const externalBaseUrl = `http://127.0.0.1:${upstreamPort}`;
+
+      const app = express();
+      registerOpenCodeProxy(app, {
+        fs: {},
+        os: {},
+        path,
+        OPEN_CODE_READY_GRACE_MS: 0,
+        getRuntime: () => ({
+          openCodePort: upstreamPort,
+          openCodeBaseUrl: externalBaseUrl,
+          isOpenCodeReady: true,
+          openCodeNotReadySince: 0,
+          isRestartingOpenCode: false,
+        }),
+        getOpenCodeAuthHeaders: () => ({}),
+        buildOpenCodeUrl: (requestPath) => `${externalBaseUrl}${requestPath}`,
+        ensureOpenCodeApiPrefix: () => {},
+      });
+      proxyServer = await listen(app);
+      const proxyPort = proxyServer.address().port;
+
+      const payload = {
+        messageID: 'msg_spreadsheet_file_url',
+        parts: [{
+          type: 'file',
+          filename: 'report.xlsx',
+          mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          url: pathToFileURL(spreadsheetPath).toString(),
+        }],
+      };
+
+      const response = await fetch(`http://127.0.0.1:${proxyPort}/api/session/abc/prompt_async`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.body.parts).toHaveLength(1);
+      expect(data.body.parts[0].mime).toBe('text/plain');
+      expect(data.body.parts[0].url.startsWith('data:text/plain;base64,')).toBe(true);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('sanitizes experimental session list responses and forwards query params', async () => {

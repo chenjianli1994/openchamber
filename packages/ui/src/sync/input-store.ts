@@ -5,6 +5,7 @@
 
 import { create } from "zustand"
 import type { AttachedFile } from "@/stores/types/sessionTypes"
+import { convertSpreadsheetFileToTextAttachment, isSpreadsheetAttachment } from "@/lib/attachments/spreadsheet"
 
 const FILE_URI_PREFIX = "file://"
 const pendingVSCodeSelectionKeys = new Set<string>()
@@ -41,6 +42,21 @@ const readFileAsDataUrl = (file: File): Promise<string> => new Promise((resolve,
   reader.onabort = () => reject(new Error("File read aborted"))
   reader.readAsDataURL(file)
 })
+
+const buildLocalAttachment = async (file: File): Promise<Pick<AttachedFile, "file" | "dataUrl" | "mimeType" | "filename" | "size">> => {
+  if (isSpreadsheetAttachment(file)) {
+    return convertSpreadsheetFileToTextAttachment(file)
+  }
+
+  const dataUrl = await readFileAsDataUrl(file)
+  return {
+    file,
+    dataUrl,
+    mimeType: file.type,
+    filename: file.name,
+    size: file.size,
+  }
+}
 
 const getDataUrlByteSize = (url: string): number => {
   if (!url.startsWith("data:")) return 0
@@ -154,20 +170,16 @@ export const useInputStore = create<InputState>()((set, get) => ({
   addAttachedFile: async (file: File) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
     const generation = attachmentReadGeneration
-    let dataUrl: string
+    let prepared: Pick<AttachedFile, "file" | "dataUrl" | "mimeType" | "filename" | "size">
     try {
-      dataUrl = await readFileAsDataUrl(file)
+      prepared = await buildLocalAttachment(file)
     } catch {
       return
     }
     if (generation !== attachmentReadGeneration) return
     const attached: AttachedFile = {
       id,
-      file,
-      dataUrl,
-      mimeType: file.type,
-      filename: file.name,
-      size: file.size,
+      ...prepared,
       source: "local",
     }
     set((s) => ({ attachedFiles: [...s.attachedFiles, attached] }))

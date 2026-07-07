@@ -18,6 +18,7 @@ import { runtimeFetch } from "@/lib/runtime-fetch";
 import { getRuntimeKey } from "@/lib/runtime-switch";
 import { getRegisteredRuntimeAPIs } from "@/contexts/runtimeAPIRegistry";
 import { markStartupTrace } from "@/lib/startupTrace";
+import { convertSpreadsheetDataUrlToTextFilePart, isSpreadsheetAttachment } from "@/lib/attachments/spreadsheet";
 import {
   assertProviderCircuitClosed,
   recordProviderSuccess,
@@ -694,6 +695,13 @@ class OpencodeService {
    * - Converts HEIC/HEIF images to JPEG
    */
   private async normalizeFilePart(file: { mime: string; filename?: string; url: string }): Promise<{ mime: string; filename?: string; url: string }> {
+    if (file.mime.trim().toLowerCase() !== 'text/plain' && isSpreadsheetAttachment(file)) {
+      const converted = convertSpreadsheetDataUrlToTextFilePart(file);
+      if (converted) {
+        return converted;
+      }
+    }
+
     // Handle HEIC conversion
     if (this.isHeicMime(file.mime)) {
       return this.convertHeicToJpeg(file);

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test"
+import { utils, write } from "xlsx"
 import { useInputStore } from "./input-store"
 
 class MockFileReader {
@@ -134,5 +135,35 @@ describe("input-store attachments", () => {
     await secondAdd
 
     expect(useInputStore.getState().attachedFiles.map((attached) => attached.filename)).toEqual(["hello.txt"])
+  })
+
+  test("converts spreadsheet attachments to plain text before sending", async () => {
+    const workbook = utils.book_new()
+    const worksheet = utils.aoa_to_sheet([
+      ["name", "status"],
+      ["pump", "ok"],
+    ])
+    utils.book_append_sheet(workbook, worksheet, "Data")
+
+    const payload = write(workbook, { type: "array", bookType: "xlsx" }) as ArrayBuffer
+    const file = new File([payload], "report.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    })
+
+    await useInputStore.getState().addAttachedFile(file)
+
+    const [attached] = useInputStore.getState().attachedFiles
+    expect(Boolean(attached)).toBe(true)
+    expect(attached!.mimeType).toBe("text/plain")
+    expect(attached!.filename).toBe("report.xlsx")
+    expect(attached!.file.type.startsWith("text/plain")).toBe(true)
+    expect(attached!.dataUrl.startsWith("data:text/plain;base64,")).toBe(true)
+
+    const base64Payload = attached!.dataUrl.split(",", 2)[1]
+    const normalizedText = new TextDecoder().decode(Uint8Array.from(atob(base64Payload), (char) => char.charCodeAt(0)))
+    expect(normalizedText).toContain("Spreadsheet attachment")
+    expect(normalizedText).toContain("Original filename: report.xlsx")
+    expect(normalizedText).toContain("## Sheet: Data")
+    expect(normalizedText).toContain("pump")
   })
 })

@@ -1,4 +1,5 @@
 import { createProxyMiddleware } from 'http-proxy-middleware';
+import express from 'express';
 
 import {
   applyForwardProxyResponseHeaders,
@@ -6,6 +7,7 @@ import {
   shouldForwardProxyResponseHeader,
 } from '../../proxy-headers.js';
 import { createRealpathCache } from '../path-realpath-cache.js';
+import { rewriteSpreadsheetPartsInPromptBody } from './spreadsheet-parts.js';
 
 export const createDirectoryQueryCanonicalizer = ({ realpath, ...cacheOptions } = {}) => {
   const realpathCache = createRealpathCache({ fallbackOnError: true, realpath, ...cacheOptions });
@@ -247,7 +249,9 @@ export const registerOpenCodeProxy = (app, deps) => {
 
     const contentType = getContentType(proxyReq, req).toLowerCase();
     if (Buffer.isBuffer(req.body)) return req.body;
-    if (contentType.includes('application/json')) return Buffer.from(JSON.stringify(req.body));
+    if (contentType.includes('application/json')) {
+      return Buffer.from(JSON.stringify(rewriteSpreadsheetPartsInPromptBody(req.body)));
+    }
     if (contentType.includes('application/x-www-form-urlencoded')) return Buffer.from(serializeUrlEncodedBody(req.body));
     if (typeof req.body === 'string') return Buffer.from(req.body);
     return null;
@@ -658,6 +662,13 @@ export const registerOpenCodeProxy = (app, deps) => {
 
   app.get('/api/experimental/session', (req, res, next) => {
     return forwardSanitizedSessionListRequest(req, res, next, 'experimental.session');
+  });
+
+  const parsePromptJsonBody = express.json({ limit: '50mb' });
+  app.use(['/api/session/:sessionID/prompt', '/api/session/:sessionID/prompt_async'], (req, res, next) => {
+    const contentType = String(req.headers?.['content-type'] || '').toLowerCase();
+    if (!contentType.includes('application/json')) return next();
+    return parsePromptJsonBody(req, res, next);
   });
 
   // Generic proxy for non-SSE OpenCode API routes.
